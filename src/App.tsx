@@ -185,7 +185,7 @@ export default function App() {
   const [view, setView] = useState('dashboard');
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
   const [isRegistering, setIsRegistering] = useState(false);
 
   // Modals
@@ -605,7 +605,10 @@ export default function App() {
 
   const NavItem = ({ id, icon: Icon, label }: any) => (
     <button
-      onClick={() => setView(id)}
+      onClick={() => {
+        setView(id);
+        if (window.innerWidth < 1024) setIsSidebarOpen(false);
+      }}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
         view === id ? 'bg-black text-white shadow-lg' : 'text-zinc-500 hover:bg-zinc-100'
       }`}
@@ -617,14 +620,35 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-50 flex">
+      {/* Mobile Backdrop */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[45] lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-100 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         <div className="h-full flex flex-col p-6">
-          <div className="flex items-center gap-3 mb-10 px-2">
-            <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-              <Building2 className="text-white" size={18} />
+          <div className="flex items-center justify-between mb-10 px-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
+                <Building2 className="text-white" size={18} />
+              </div>
+              <span className="font-bold text-lg tracking-tight">RentMaster</span>
             </div>
-            <span className="font-bold text-lg tracking-tight">RentMaster</span>
+            <button 
+              onClick={() => setIsSidebarOpen(false)} 
+              className="lg:hidden p-2 hover:bg-zinc-100 rounded-lg text-zinc-400"
+            >
+              <X size={20} />
+            </button>
           </div>
 
           <nav className="flex-1 space-y-2">

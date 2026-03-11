@@ -22,7 +22,8 @@ import {
   DollarSign,
   ArrowLeft,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -195,6 +196,7 @@ export default function App() {
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
   const [selectedUserForReset, setSelectedUserForReset] = useState<any>(null);
+  const [isQuickSetupLoading, setIsQuickSetupLoading] = useState(false);
 
   // Data States
   const [properties, setProperties] = useState<Property[]>([]);
@@ -216,9 +218,8 @@ export default function App() {
     }
   }, [token]);
 
-  const fetchInitialData = async () => {
-    if (isLoading) return;
-    setIsLoading(true);
+  const fetchInitialData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const res = await fetch('/api/init', {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -242,7 +243,36 @@ export default function App() {
       console.error("Failed to fetch data", err);
       setIsInitialLoad(false);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
+    }
+  };
+
+  // Auto-refresh polling
+  useEffect(() => {
+    if (token) {
+      const interval = setInterval(() => {
+        fetchInitialData(true);
+        if (view === 'property-dashboard' && selectedProperty) {
+          refreshPropertyStats(selectedProperty);
+        }
+      }, 30000); // Refresh every 30 seconds
+      return () => clearInterval(interval);
+    }
+  }, [token, view, selectedProperty]);
+
+  const refreshPropertyStats = async (property: Property) => {
+    try {
+      const statsRes = await fetch(`/api/analytics/property/${property.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const unitsRes = await fetch(`/api/properties/${property.id}/units`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (statsRes.ok) setSelectedPropertyStats(await statsRes.json());
+      if (unitsRes.ok) setPropertyUnits(await unitsRes.json());
+    } catch (err) {
+      console.error("Failed to refresh property stats", err);
     }
   };
 
@@ -337,13 +367,7 @@ export default function App() {
         setActiveModal(null);
         fetchInitialData();
         if (selectedProperty) {
-          const unitsRes = await fetch(`/api/properties/${selectedProperty.id}/units`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (unitsRes.ok) {
-            const units = await unitsRes.json();
-            setPropertyUnits(units);
-          }
+          refreshPropertyStats(selectedProperty);
         }
       }
     } catch (err) {
@@ -447,26 +471,41 @@ export default function App() {
     }
   };
 
+  const handleQuickSetup = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsQuickSetupLoading(true);
+    const formData = new FormData(e.currentTarget);
+    const data = Object.fromEntries(formData.entries());
+    
+    try {
+      const res = await fetch('/api/quick-setup', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to perform quick setup");
+      }
+      alert("Property and Caretaker created successfully!");
+      setActiveModal(null);
+      fetchInitialData();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsQuickSetupLoading(false);
+    }
+  };
+
   const openPropertyDashboard = async (property: Property) => {
     setSelectedProperty(property);
     setView('property-dashboard');
     setIsLoading(true);
     try {
-      const statsRes = await fetch(`/api/analytics/property/${property.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const unitsRes = await fetch(`/api/properties/${property.id}/units`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (statsRes.ok && unitsRes.ok) {
-        const stats = await statsRes.json();
-        const units = await unitsRes.json();
-        setSelectedPropertyStats(stats);
-        setPropertyUnits(units);
-      }
-    } catch (err) {
-      console.error("Failed to fetch property dashboard data", err);
+      await refreshPropertyStats(property);
     } finally {
       setIsLoading(false);
     }
@@ -576,7 +615,7 @@ export default function App() {
               </form>
             ) : (
               <form onSubmit={handleLogin} className="space-y-4">
-                <Input label="Email Address" name="email" type="email" placeholder="admin@rentmaster.com" required />
+                <Input label="Email Address" name="email" type="email" placeholder="your@email.com" required />
                 <Input label="Password" name="password" type="password" placeholder="••••••••" required />
                 <Button type="submit" className="w-full py-3">Sign In</Button>
                 <button 
@@ -587,15 +626,6 @@ export default function App() {
                   Don't have an account? Register as Landlord
                 </button>
               </form>
-            )}
-
-            {!isRegistering && (
-              <div className="mt-6 pt-6 border-t border-zinc-100 text-center">
-                <p className="text-xs text-zinc-400">
-                  Demo Credentials:<br/>
-                  Admin: admin@rentmaster.com / admin123
-                </p>
-              </div>
             )}
           </Card>
         </motion.div>
@@ -619,7 +649,18 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex">
+    <div className="min-h-screen bg-zinc-50/30 flex relative overflow-hidden">
+      {/* Background Image Overlay */}
+      <div 
+        className="fixed inset-0 z-0 opacity-10 pointer-events-none"
+        style={{
+          backgroundImage: 'url("https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=2070&auto=format&fit=crop")',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundAttachment: 'fixed'
+        }}
+      />
+      
       {/* Mobile Backdrop */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -634,7 +675,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Sidebar */}
-      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-zinc-100 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
+      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white/80 backdrop-blur-md border-r border-zinc-100 transform transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         <div className="h-full flex flex-col p-6">
           <div className="flex items-center justify-between mb-10 px-2">
             <div className="flex items-center gap-3">
@@ -684,7 +725,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 overflow-auto">
-        <header className="h-16 bg-white border-b border-zinc-100 flex items-center justify-between px-8 sticky top-0 z-40">
+        <header className="h-16 bg-white/80 backdrop-blur-md border-b border-zinc-100 flex items-center justify-between px-8 sticky top-0 z-40">
           <div className="flex items-center gap-4">
             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="lg:hidden p-2 hover:bg-zinc-100 rounded-lg">
               <Menu size={20} />
@@ -804,11 +845,18 @@ export default function App() {
               >
                 <div className="flex items-center justify-between">
                   <h3 className="text-2xl font-bold">Properties</h3>
-                  {user?.role !== 'CARETAKER' && (
-                    <Button onClick={() => setActiveModal('addProperty')}>
-                      <Plus size={18} /> Add Property
-                    </Button>
-                  )}
+                  <div className="flex gap-2">
+                    {user?.role === 'LANDLORD' && (
+                      <Button variant="secondary" onClick={() => setActiveModal('quickSetup')}>
+                        <Zap size={18} /> Quick Setup
+                      </Button>
+                    )}
+                    {user?.role !== 'CARETAKER' && (
+                      <Button onClick={() => setActiveModal('addProperty')}>
+                        <Plus size={18} /> Add Property
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1352,6 +1400,28 @@ export default function App() {
             )}
             <Button type="submit" className="w-full">
               {user?.role === 'ADMIN' ? "Create User" : "Create Caretaker"}
+            </Button>
+          </form>
+        </Modal>
+
+        <Modal isOpen={activeModal === 'quickSetup'} onClose={() => setActiveModal(null)} title="Quick Property Setup">
+          <form onSubmit={handleQuickSetup} className="space-y-6">
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Property Details</h4>
+              <Input label="Property Name" name="propertyName" placeholder="e.g. Skyline Heights" required />
+              <Input label="Location" name="location" placeholder="e.g. Downtown" required />
+            </div>
+            
+            <div className="space-y-4 pt-4 border-t border-zinc-100">
+              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">New Caretaker Details</h4>
+              <Input label="Caretaker Name" name="caretakerName" required />
+              <Input label="Email Address" name="caretakerEmail" type="email" required />
+              <Input label="Password" name="caretakerPassword" type="password" required />
+              <Input label="Phone Number" name="caretakerPhone" required />
+            </div>
+
+            <Button type="submit" className="w-full" isLoading={isQuickSetupLoading}>
+              Create Property & Caretaker
             </Button>
           </form>
         </Modal>

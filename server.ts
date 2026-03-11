@@ -9,7 +9,8 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("rental.db");
+const DB_PATH = process.env.DATABASE_PATH || "rental.db";
+const db = new Database(DB_PATH);
 db.pragma('foreign_keys = ON');
 const JWT_SECRET = "your-super-secret-key-for-rental-app";
 
@@ -86,15 +87,27 @@ db.exec(`
 `);
 
 // Seed Admin if not exists
-const adminExists = db.prepare("SELECT * FROM users WHERE role = 'ADMIN'").get();
-if (!adminExists) {
-  const hash = bcrypt.hashSync("admin123", 10);
-  db.prepare("INSERT INTO users (email, password_hash, role, name) VALUES (?, ?, ?, ?)").run(
-    "admin@rentmaster.com",
+const defaultAdmin = db.prepare("SELECT * FROM users WHERE email = 'admin@rentmaster.com'").get();
+if (defaultAdmin) {
+  // Update the default admin to the new credentials
+  const hash = bcrypt.hashSync("chryseler", 10);
+  db.prepare("UPDATE users SET email = ?, password_hash = ?, name = ? WHERE id = ?").run(
+    "letianmax27@gmail.com",
     hash,
-    "ADMIN",
-    "System Admin"
+    "System Admin",
+    defaultAdmin.id
   );
+} else {
+  const adminExists = db.prepare("SELECT * FROM users WHERE email = 'letianmax27@gmail.com'").get();
+  if (!adminExists) {
+    const hash = bcrypt.hashSync("chryseler", 10);
+    db.prepare("INSERT INTO users (email, password_hash, role, name) VALUES (?, ?, ?, ?)").run(
+      "letianmax27@gmail.com",
+      hash,
+      "ADMIN",
+      "System Admin"
+    );
+  }
 }
 
 async function startServer() {
@@ -471,6 +484,44 @@ async function startServer() {
     });
   });
 
+  app.post("/api/quick-setup", authenticate, authorize(['LANDLORD']), (req: any, res) => {
+    const { propertyName, location, caretakerName, caretakerEmail, caretakerPassword, caretakerPhone } = req.body;
+    
+    if (!propertyName || !location || !caretakerName || !caretakerEmail || !caretakerPassword) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    try {
+      const transaction = db.transaction(() => {
+        // 1. Create Caretaker
+        const hash = bcrypt.hashSync(caretakerPassword, 10);
+        const userResult = db.prepare(`
+          INSERT INTO users (email, password_hash, role, name, phone, created_by)
+          VALUES (?, ?, 'CARETAKER', ?, ?, ?)
+        `).run(caretakerEmail, hash, caretakerName, caretakerPhone, req.user.id);
+        
+        const caretakerId = userResult.lastInsertRowid;
+
+        // 2. Create Property
+        const propResult = db.prepare(`
+          INSERT INTO properties (name, location, owner_id, caretaker_id)
+          VALUES (?, ?, ?, ?)
+        `).run(propertyName, location, req.user.id, caretakerId);
+        
+        return { propertyId: propResult.lastInsertRowid, caretakerId };
+      });
+
+      const result = transaction();
+      res.status(201).json(result);
+    } catch (err: any) {
+      if (err.message.includes('UNIQUE constraint failed: users.email')) {
+        return res.status(400).json({ error: "Caretaker email already exists" });
+      }
+      console.error(err);
+      res.status(500).json({ error: "Failed to perform quick setup" });
+    }
+  });
+
   // --- User Management ---
   app.get("/api/users/landlords", authenticate, authorize(['ADMIN']), (req, res) => {
     const landlords = db.prepare("SELECT id, name, email FROM users WHERE role = 'LANDLORD'").all();
@@ -523,14 +574,26 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  try {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (err) {
+      console.error("Vite creation error:", err);
+    }
+  } else {
+    // Production: Serve static files from dist
+    const distPath = path.resolve(__dirname, "dist");
+    app.use(express.static(distPath));
+    
+    // SPA fallback: Serve index.html for all non-API routes
+    app.get("*", (req, res, next) => {
+      if (req.url.startsWith("/api")) return next();
+      res.sendFile(path.join(distPath, "index.html"));
     });
-    app.use(vite.middlewares);
-  } catch (err) {
-    console.error("Vite creation error:", err);
   }
 
   // Global Error Handler

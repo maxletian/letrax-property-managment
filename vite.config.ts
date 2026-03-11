@@ -19,7 +19,6 @@ export default defineConfig(({mode}) => {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-
       host: true,
       allowedHosts: [
         "letrax-property-managment.onrender.com"

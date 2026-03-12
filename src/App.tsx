@@ -649,6 +649,17 @@ export default function App() {
     );
   }
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-zinc-200 border-t-black rounded-full animate-spin" />
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Verifying Session...</p>
+        </div>
+      </div>
+    );
+  }
+
   const NavItem = ({ id, icon: Icon, label }: any) => (
     <button
       onClick={() => {

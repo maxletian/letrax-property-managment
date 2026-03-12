@@ -317,8 +317,19 @@ async function startServer() {
     // Restrict public registration to LANDLORD only
     // If authenticated, allow the role passed (e.g. Landlord creating Caretaker)
     let assignedRole = role || 'LANDLORD';
-    if (!creatorId && assignedRole === 'ADMIN') {
+    if (!creatorId) {
       assignedRole = 'LANDLORD';
+    } else {
+      // If authenticated, check if they have permission to create that role
+      // For now, let's just ensure they can't create ADMINs unless they are ADMIN
+      // and Landlords can only create Caretakers
+      const creator: any = db.prepare("SELECT role FROM users WHERE id = ?").get(creatorId);
+      if (creator.role === 'LANDLORD' && assignedRole !== 'CARETAKER') {
+        assignedRole = 'CARETAKER';
+      }
+      if (creator.role !== 'ADMIN' && assignedRole === 'ADMIN') {
+        assignedRole = 'LANDLORD';
+      }
     }
 
     const hash = bcrypt.hashSync(password, 10);
@@ -372,9 +383,17 @@ async function startServer() {
 
   // --- Unit Routes ---
   app.get("/api/properties/:id/units", authenticate, (req: any, res) => {
-    const prop: any = db.prepare("SELECT status FROM properties WHERE id = ?").get(req.params.id);
+    const prop: any = db.prepare("SELECT status, owner_id, caretaker_id FROM properties WHERE id = ?").get(req.params.id);
     if (!prop) return res.status(404).json({ error: "Property not found" });
     
+    // Isolation check
+    if (req.user.role === 'LANDLORD' && prop.owner_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (req.user.role === 'CARETAKER' && prop.caretaker_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (prop.status === 'LOCKED' && req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: "Property is locked and inaccessible" });
     }
@@ -385,8 +404,14 @@ async function startServer() {
 
   app.post("/api/units", authenticate, authorize(['ADMIN', 'LANDLORD']), (req: any, res) => {
     const { property_id, unit_number, monthly_rent } = req.body;
-    // Check if property is locked
-    const prop: any = db.prepare("SELECT status FROM properties WHERE id = ?").get(property_id);
+    
+    // Isolation check
+    const prop: any = db.prepare("SELECT status, owner_id FROM properties WHERE id = ?").get(property_id);
+    if (!prop) return res.status(404).json({ error: "Property not found" });
+    if (req.user.role === 'LANDLORD' && prop.owner_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (prop.status === 'LOCKED' && req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: "Property is locked" });
     }
@@ -429,9 +454,18 @@ async function startServer() {
   app.post("/api/tenants", authenticate, authorize(['ADMIN', 'LANDLORD', 'CARETAKER']), (req: any, res) => {
     const { unit_id, full_name, phone, national_id, move_in_date, deposit } = req.body;
     
-    // Check lock
+    // Check access and lock
     const unit: any = db.prepare("SELECT property_id FROM units WHERE id = ?").get(unit_id);
-    const prop: any = db.prepare("SELECT status FROM properties WHERE id = ?").get(unit.property_id);
+    if (!unit) return res.status(404).json({ error: "Unit not found" });
+    const prop: any = db.prepare("SELECT status, owner_id, caretaker_id FROM properties WHERE id = ?").get(unit.property_id);
+    
+    if (req.user.role === 'LANDLORD' && prop.owner_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (req.user.role === 'CARETAKER' && prop.caretaker_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (prop.status === 'LOCKED' && req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: "Property is locked" });
     }
@@ -466,10 +500,19 @@ async function startServer() {
   app.post("/api/payments", authenticate, authorize(['ADMIN', 'LANDLORD', 'CARETAKER']), (req: any, res) => {
     const { tenant_id, amount, month, year, transaction_id, method, type } = req.body;
     
-    // Check lock
+    // Check access and lock
     const tenant: any = db.prepare("SELECT unit_id FROM tenants WHERE id = ?").get(tenant_id);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
     const unit: any = db.prepare("SELECT property_id FROM units WHERE id = ?").get(tenant.unit_id);
-    const prop: any = db.prepare("SELECT status FROM properties WHERE id = ?").get(unit.property_id);
+    const prop: any = db.prepare("SELECT status, owner_id, caretaker_id FROM properties WHERE id = ?").get(unit.property_id);
+    
+    if (req.user.role === 'LANDLORD' && prop.owner_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (req.user.role === 'CARETAKER' && prop.caretaker_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (prop.status === 'LOCKED' && req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: "Property is locked" });
     }
@@ -497,8 +540,16 @@ async function startServer() {
 
   app.get("/api/analytics/property/:id", authenticate, (req: any, res) => {
     const propId = req.params.id;
-    const prop: any = db.prepare("SELECT status FROM properties WHERE id = ?").get(propId);
+    const prop: any = db.prepare("SELECT status, owner_id, caretaker_id FROM properties WHERE id = ?").get(propId);
     if (!prop) return res.status(404).json({ error: "Property not found" });
+
+    // Isolation check
+    if (req.user.role === 'LANDLORD' && prop.owner_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    if (req.user.role === 'CARETAKER' && prop.caretaker_id !== req.user.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
 
     if (prop.status === 'LOCKED' && req.user.role !== 'ADMIN') {
       return res.status(403).json({ error: "Property is locked" });

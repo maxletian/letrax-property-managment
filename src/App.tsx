@@ -198,7 +198,7 @@ export default function App() {
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
   const [selectedUserForReset, setSelectedUserForReset] = useState<any>(null);
-  const [isQuickSetupLoading, setIsQuickSetupLoading] = useState(false);
+  const [caretakerType, setCaretakerType] = useState<'existing' | 'new'>('existing');
 
   // Data States
   const [properties, setProperties] = useState<Property[]>([]);
@@ -332,23 +332,54 @@ export default function App() {
 
   const handleCreateProperty = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
     const formData = new FormData(e.target as HTMLFormElement);
     const data = Object.fromEntries(formData);
+    
     try {
-      const res = await fetch('/api/properties', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(data)
-      });
+      let res;
+      if (caretakerType === 'new') {
+        // Use quick setup logic
+        res = await fetch('/api/quick-setup', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            propertyName: data.name,
+            location: data.location,
+            caretakerName: data.caretakerName,
+            caretakerEmail: data.caretakerEmail,
+            caretakerPassword: data.caretakerPassword,
+            caretakerPhone: data.caretakerPhone,
+            owner_id: data.owner_id
+          })
+        });
+      } else {
+        // Standard property creation
+        res = await fetch('/api/properties', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(data)
+        });
+      }
+
       if (res.ok) {
         setActiveModal(null);
         fetchInitialData();
+        alert(caretakerType === 'new' ? "Property and Caretaker created successfully!" : "Property created successfully!");
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to create property");
       }
     } catch (err) {
-      alert("Failed to create property");
+      alert("An error occurred while creating the property");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -482,35 +513,6 @@ export default function App() {
       }
     } catch (err) {
       alert("Failed to create user");
-    }
-  };
-
-  const handleQuickSetup = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setIsQuickSetupLoading(true);
-    const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData.entries());
-    
-    try {
-      const res = await fetch('/api/quick-setup', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(data)
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to perform quick setup");
-      }
-      alert("Property and Caretaker created successfully!");
-      setActiveModal(null);
-      fetchInitialData();
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setIsQuickSetupLoading(false);
     }
   };
 
@@ -869,11 +871,6 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-2xl font-bold">Properties</h3>
                   <div className="flex gap-2">
-                    {user?.role === 'LANDLORD' && (
-                      <Button variant="secondary" onClick={() => setActiveModal('quickSetup')}>
-                        <Zap size={18} /> Quick Setup
-                      </Button>
-                    )}
                     {user?.role !== 'CARETAKER' && (
                       <Button onClick={() => setActiveModal('addProperty')}>
                         <Plus size={18} /> Add Property
@@ -1299,14 +1296,52 @@ export default function App() {
         </Modal>
 
         <Modal isOpen={activeModal === 'addProperty'} onClose={() => setActiveModal(null)} title="Add New Property">
-          <form onSubmit={handleCreateProperty} className="space-y-4">
-            <Input label="Property Name" name="name" placeholder="e.g. GreenView Apartments" required />
-            <Input label="Location" name="location" placeholder="e.g. Nairobi, Kenya" required />
-            {user?.role === 'ADMIN' && (
-              <Select label="Owner (Landlord)" name="owner_id" placeholder="Select a landlord" options={landlords.map(l => ({ value: l.id, label: l.name }))} required />
-            )}
-            <Select label="Caretaker" name="caretaker_id" placeholder="Select a caretaker" options={caretakers.map(c => ({ value: c.id, label: c.name }))} required />
-            <Button type="submit" className="w-full">Create Property</Button>
+          <form onSubmit={handleCreateProperty} className="space-y-6">
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Property Details</h4>
+              <Input label="Property Name" name="name" placeholder="e.g. GreenView Apartments" required />
+              <Input label="Location" name="location" placeholder="e.g. Nairobi, Kenya" required />
+              {user?.role === 'ADMIN' && (
+                <Select label="Owner (Landlord)" name="owner_id" placeholder="Select a landlord" options={landlords.map(l => ({ value: l.id, label: l.name }))} required />
+              )}
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-zinc-100">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Caretaker Assignment</h4>
+                <div className="flex bg-zinc-100 p-1 rounded-lg">
+                  <button 
+                    type="button"
+                    onClick={() => setCaretakerType('existing')}
+                    className={`px-3 py-1 text-[10px] font-bold uppercase rounded-md transition-all ${caretakerType === 'existing' ? 'bg-white shadow-sm text-black' : 'text-zinc-400'}`}
+                  >
+                    Existing
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setCaretakerType('new')}
+                    className={`px-3 py-1 text-[10px] font-bold uppercase rounded-md transition-all ${caretakerType === 'new' ? 'bg-white shadow-sm text-black' : 'text-zinc-400'}`}
+                  >
+                    New
+                  </button>
+                </div>
+              </div>
+
+              {caretakerType === 'existing' ? (
+                <Select label="Select Caretaker" name="caretaker_id" placeholder="Select a caretaker" options={caretakers.map(c => ({ value: c.id, label: c.name }))} required />
+              ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <Input label="Caretaker Name" name="caretakerName" required />
+                  <Input label="Email Address" name="caretakerEmail" type="email" required />
+                  <Input label="Password" name="caretakerPassword" type="password" required />
+                  <Input label="Phone Number" name="caretakerPhone" required />
+                </div>
+              )}
+            </div>
+
+            <Button type="submit" className="w-full" isLoading={isLoading}>
+              {caretakerType === 'new' ? "Create Property & Caretaker" : "Create Property"}
+            </Button>
           </form>
         </Modal>
 
@@ -1440,27 +1475,6 @@ export default function App() {
           </form>
         </Modal>
 
-        <Modal isOpen={activeModal === 'quickSetup'} onClose={() => setActiveModal(null)} title="Quick Property Setup">
-          <form onSubmit={handleQuickSetup} className="space-y-6">
-            <div className="space-y-4">
-              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Property Details</h4>
-              <Input label="Property Name" name="propertyName" placeholder="e.g. Skyline Heights" required />
-              <Input label="Location" name="location" placeholder="e.g. Downtown" required />
-            </div>
-            
-            <div className="space-y-4 pt-4 border-t border-zinc-100">
-              <h4 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">New Caretaker Details</h4>
-              <Input label="Caretaker Name" name="caretakerName" required />
-              <Input label="Email Address" name="caretakerEmail" type="email" required />
-              <Input label="Password" name="caretakerPassword" type="password" required />
-              <Input label="Phone Number" name="caretakerPhone" required />
-            </div>
-
-            <Button type="submit" className="w-full" isLoading={isQuickSetupLoading}>
-              Create Property & Caretaker
-            </Button>
-          </form>
-        </Modal>
 
         <Modal isOpen={activeModal === 'tenantDetails'} onClose={() => setActiveModal(null)} title="Full Tenant Report">
           {selectedTenant && (() => {

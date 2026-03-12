@@ -526,12 +526,14 @@ async function startServer() {
     });
   });
 
-  app.post("/api/quick-setup", authenticate, authorize(['LANDLORD']), (req: any, res) => {
-    const { propertyName, location, caretakerName, caretakerEmail, caretakerPassword, caretakerPhone } = req.body;
+  app.post("/api/quick-setup", authenticate, authorize(['ADMIN', 'LANDLORD']), (req: any, res) => {
+    const { propertyName, location, caretakerName, caretakerEmail, caretakerPassword, caretakerPhone, owner_id } = req.body;
     
     if (!propertyName || !location || !caretakerName || !caretakerEmail || !caretakerPassword) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
+    const ownerId = req.user.role === 'ADMIN' ? (owner_id || req.user.id) : req.user.id;
 
     try {
       const transaction = db.transaction(() => {
@@ -540,7 +542,7 @@ async function startServer() {
         const userResult = db.prepare(`
           INSERT INTO users (email, password_hash, role, name, phone, created_by)
           VALUES (?, ?, 'CARETAKER', ?, ?, ?)
-        `).run(caretakerEmail, hash, caretakerName, caretakerPhone, req.user.id);
+        `).run(caretakerEmail, hash, caretakerName, caretakerPhone, ownerId);
         
         const caretakerId = userResult.lastInsertRowid;
 
@@ -548,7 +550,7 @@ async function startServer() {
         const propResult = db.prepare(`
           INSERT INTO properties (name, location, owner_id, caretaker_id)
           VALUES (?, ?, ?, ?)
-        `).run(propertyName, location, req.user.id, caretakerId);
+        `).run(propertyName, location, ownerId, caretakerId);
         
         return { propertyId: propResult.lastInsertRowid, caretakerId };
       });

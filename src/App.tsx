@@ -46,6 +46,7 @@ interface Property {
   status: 'ACTIVE' | 'LOCKED';
   caretaker_id: number;
   caretaker_name?: string;
+  total_arrears: number;
 }
 
 interface Unit {
@@ -66,6 +67,7 @@ interface Tenant {
   national_id: string;
   move_in_date: string;
   deposit: number;
+  monthly_rent: number;
   status: 'ACTIVE' | 'VERIFICATION_REQUIRED';
 }
 
@@ -419,10 +421,18 @@ export default function App() {
     }
   };
 
+  const [paymentMethod, setPaymentMethod] = useState('MPESA');
+
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
     const data = Object.fromEntries(formData);
+    
+    if (data.method === 'MPESA' && !data.transaction_id) {
+      alert("Transaction ID is required for M-Pesa payments");
+      return;
+    }
+
     try {
       const res = await fetch('/api/payments', {
         method: 'POST',
@@ -434,12 +444,16 @@ export default function App() {
           ...data,
           amount: parseFloat(data.amount as string),
           month: parseInt(data.month as string),
-          year: parseInt(data.year as string)
+          year: parseInt(data.year as string),
+          transaction_id: data.transaction_id || `CASH-${Date.now()}`
         })
       });
       if (res.ok) {
         setActiveModal(null);
         fetchInitialData();
+      } else {
+        const result = await res.json();
+        alert(result.error || "Failed to record payment");
       }
     } catch (err) {
       alert("Failed to record payment");
@@ -772,15 +786,24 @@ export default function App() {
                       <StatCard icon={Building2} label="Total Properties" value={globalStats.totalProperties} trend="+2 this month" />
                       <StatCard icon={Users} label="Total Tenants" value={globalStats.totalTenants} trend="+12 this month" />
                       <StatCard icon={TrendingUp} label="Occupancy Rate" value={`${globalStats.occupancyRate.toFixed(1)}%`} trend="Stable" />
-                      <StatCard icon={DollarSign} label="Total Revenue" value={`$${globalStats.totalRevenue.toLocaleString()}`} trend="+15% vs last month" />
+                      <StatCard icon={DollarSign} label="Total Revenue" value={`KSh ${globalStats.totalRevenue.toLocaleString()}`} trend="+15% vs last month" />
                     </>
                   )}
                   {user?.role !== 'ADMIN' && (
                     <>
                       <StatCard icon={Building2} label="Active Properties" value={properties.filter(p => p.status === 'ACTIVE').length} />
                       <StatCard icon={Users} label="Active Tenants" value={tenants.length} />
-                      <StatCard icon={CreditCard} label="Recent Payments" value={payments.length} />
-                      <StatCard icon={AlertCircle} label="Pending Verifications" value={tenants.filter(t => t.status === 'VERIFICATION_REQUIRED').length} />
+                      {user?.role === 'LANDLORD' && globalStats ? (
+                        <>
+                          <StatCard icon={DollarSign} label="Total Revenue" value={`KSh ${globalStats.totalRevenue.toLocaleString()}`} />
+                          <StatCard icon={AlertCircle} label="Total Arrears" value={`KSh ${globalStats.totalArrears.toLocaleString()}`} />
+                        </>
+                      ) : (
+                        <>
+                          <StatCard icon={CreditCard} label="Recent Payments" value={payments.length} />
+                          <StatCard icon={AlertCircle} label="Pending Verifications" value={tenants.filter(t => t.status === 'VERIFICATION_REQUIRED').length} />
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -806,7 +829,7 @@ export default function App() {
                             <tr key={p.id} className="text-sm">
                               <td className="py-4 font-medium">{p.tenant_name}</td>
                               <td className="py-4 text-zinc-500">{p.unit_number}</td>
-                              <td className="py-4 font-bold">${p.amount}</td>
+                              <td className="py-4 font-bold">KSh {p.amount}</td>
                               <td className="py-4"><Badge variant="success">Completed</Badge></td>
                             </tr>
                           ))}
@@ -930,18 +953,18 @@ export default function App() {
                   <StatCard 
                     icon={DollarSign} 
                     label="Expected Rent" 
-                    value={`$${selectedPropertyStats?.expectedRent?.toLocaleString() || 0}`} 
+                    value={`KSh ${selectedPropertyStats?.expectedRent?.toLocaleString() || 0}`} 
                   />
                   <StatCard 
                     icon={TrendingUp} 
                     label="Collected (MTD)" 
-                    value={`$${selectedPropertyStats?.collectedRent?.toLocaleString() || 0}`} 
+                    value={`KSh ${selectedPropertyStats?.collectedRent?.toLocaleString() || 0}`} 
                     trend={`${((selectedPropertyStats?.collectedRent / selectedPropertyStats?.expectedRent) * 100 || 0).toFixed(1)}% Collection Rate`}
                   />
                   <StatCard 
                     icon={AlertCircle} 
                     label="Arrears" 
-                    value={`$${selectedPropertyStats?.arrears?.toLocaleString() || 0}`} 
+                    value={`KSh ${selectedPropertyStats?.arrears?.toLocaleString() || 0}`} 
                     trend="Outstanding payments"
                   />
                 </div>
@@ -959,7 +982,7 @@ export default function App() {
                             <span className="font-bold text-sm">Unit {u.unit_number}</span>
                             <div className={`w-2 h-2 rounded-full ${u.status === 'VACANT' ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
                           </div>
-                          <p className="text-xs text-zinc-500">${u.monthly_rent}/mo</p>
+                          <p className="text-xs text-zinc-500">KSh {u.monthly_rent}/mo</p>
                           <Badge variant={u.status === 'VACANT' ? 'success' : 'neutral'}>{u.status}</Badge>
                         </div>
                       ))}
@@ -983,7 +1006,7 @@ export default function App() {
                             <p className="text-sm font-bold">{p.tenant_name}</p>
                             <p className="text-xs text-zinc-500">Unit {p.unit_number}</p>
                           </div>
-                          <p className="text-sm font-bold text-emerald-600">+${p.amount}</p>
+                          <p className="text-sm font-bold text-emerald-600">+KSh {p.amount}</p>
                         </div>
                       ))}
                       {payments.filter(p => p.property_name === selectedProperty.name).length === 0 && (
@@ -1092,7 +1115,7 @@ export default function App() {
                             <p className="text-xs text-zinc-500">Unit {p.unit_number}</p>
                           </td>
                           <td className="py-4 font-medium">{p.property_name}</td>
-                          <td className="py-4 font-bold text-emerald-600">${p.amount}</td>
+                          <td className="py-4 font-bold text-emerald-600">KSh {p.amount}</td>
                           <td className="py-4"><Badge variant="info">{p.method}</Badge></td>
                           <td className="py-4 font-mono text-xs text-zinc-400">{p.transaction_id}</td>
                         </tr>
@@ -1132,7 +1155,7 @@ export default function App() {
                               <p className="text-xs text-zinc-500">{propPayments.length} payments recorded</p>
                             </div>
                             <div className="text-right">
-                              <p className="font-bold text-emerald-600">${total.toLocaleString()}</p>
+                              <p className="font-bold text-emerald-600">KSh {total.toLocaleString()}</p>
                               <p className="text-[10px] text-zinc-400 uppercase font-bold">Collected</p>
                             </div>
                           </div>
@@ -1158,7 +1181,7 @@ export default function App() {
                               <p className="text-xs text-zinc-500">Unit {t.unit_number}</p>
                             </div>
                             <div className="text-right">
-                              <p className="font-bold text-red-600">${arrears.toLocaleString()}</p>
+                              <p className="font-bold text-red-600">KSh {arrears.toLocaleString()}</p>
                               <p className="text-[10px] text-red-400 uppercase font-bold">Outstanding</p>
                             </div>
                           </div>
@@ -1299,7 +1322,7 @@ export default function App() {
               {propertyUnits.map(u => (
                 <div key={u.id} className="p-4 border border-zinc-100 rounded-xl">
                   <p className="font-bold">Unit {u.unit_number}</p>
-                  <p className="text-sm text-zinc-500">${u.monthly_rent}/mo</p>
+                  <p className="text-sm text-zinc-500">KSh {u.monthly_rent}/mo</p>
                   <Badge variant={u.status === 'VACANT' ? 'neutral' : 'success'}>{u.status}</Badge>
                 </div>
               ))}
@@ -1369,13 +1392,26 @@ export default function App() {
               <Select label="Month" name="month" placeholder="Select month" options={Array.from({length: 12}, (_, i) => ({ value: i + 1, label: new Date(0, i).toLocaleString('en', {month: 'long'}) }))} required />
               <Input label="Year" name="year" type="number" defaultValue={new Date().getFullYear()} required />
             </div>
-            <Input label="Transaction ID" name="transaction_id" placeholder="e.g. MPESA-12345" required />
-            <Select label="Method" name="method" placeholder="Select method" options={[
-              { value: 'MPESA', label: 'M-Pesa' },
-              { value: 'AIRTEL', label: 'Airtel Money' },
-              { value: 'CASH', label: 'Cash' },
-              { value: 'BANK', label: 'Bank Transfer' }
-            ]} required />
+            <Select 
+              label="Method" 
+              name="method" 
+              placeholder="Select method" 
+              value={paymentMethod}
+              onChange={(e: any) => setPaymentMethod(e.target.value)}
+              options={[
+                { value: 'MPESA', label: 'M-Pesa' },
+                { value: 'AIRTEL', label: 'Airtel Money' },
+                { value: 'CASH', label: 'Cash' },
+                { value: 'BANK', label: 'Bank Transfer' }
+              ]} 
+              required 
+            />
+            <Input 
+              label="Transaction ID" 
+              name="transaction_id" 
+              placeholder={paymentMethod === 'MPESA' ? "e.g. QRT123XYZ" : "Optional for non-M-Pesa"} 
+              required={paymentMethod === 'MPESA'} 
+            />
             <Select label="Type" name="type" placeholder="Select type" options={[
               { value: 'RENT', label: 'Rent' },
               { value: 'DEPOSIT', label: 'Deposit' }
@@ -1424,6 +1460,139 @@ export default function App() {
               Create Property & Caretaker
             </Button>
           </form>
+        </Modal>
+
+        <Modal isOpen={activeModal === 'tenantDetails'} onClose={() => setActiveModal(null)} title="Full Tenant Report">
+          {selectedTenant && (() => {
+            const tenantPayments = payments.filter(p => p.tenant_id === selectedTenant.id);
+            const paidRent = tenantPayments.filter(p => p.type === 'RENT').reduce((acc, curr) => acc + curr.amount, 0);
+            const paidDeposit = tenantPayments.filter(p => p.type === 'DEPOSIT').reduce((acc, curr) => acc + curr.amount, 0);
+            
+            // Calculate expected rent based on months since move-in
+            const moveInDate = new Date(selectedTenant.move_in_date);
+            const today = new Date();
+            const monthsDiff = (today.getFullYear() - moveInDate.getFullYear()) * 12 + (today.getMonth() - moveInDate.getMonth()) + 1;
+            const expectedRent = Math.max(0, monthsDiff * selectedTenant.monthly_rent);
+            const expectedDeposit = selectedTenant.deposit;
+            
+            const rentOwed = Math.max(0, expectedRent - paidRent);
+            const depositOwed = Math.max(0, expectedDeposit - paidDeposit);
+
+            return (
+              <div className="space-y-8">
+                {/* Header Info */}
+                <div className="flex items-center gap-4 p-4 bg-zinc-900 text-white rounded-2xl">
+                  <div className="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center text-xl font-bold">
+                    {selectedTenant.full_name[0]}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-lg">{selectedTenant.full_name}</h4>
+                    <p className="text-xs text-zinc-400">{selectedTenant.phone} • Unit {selectedTenant.unit_number}</p>
+                  </div>
+                  <div className="ml-auto text-right">
+                    <Badge variant={selectedTenant.status === 'ACTIVE' ? 'success' : 'warning'}>
+                      {selectedTenant.status.replace('_', ' ')}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* Financial Summary Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-4 border border-zinc-100 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Rent Analysis</h5>
+                      <Home size={14} className="text-zinc-300" />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-zinc-500">Total Expected</span>
+                        <span className="font-semibold">KSh {expectedRent.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-zinc-500">Total Paid</span>
+                        <span className="font-semibold text-emerald-600">KSh {paidRent.toLocaleString()}</span>
+                      </div>
+                      <div className="pt-2 border-t border-zinc-50 flex justify-between items-center">
+                        <span className="text-xs font-bold uppercase text-zinc-400">Rent Owed</span>
+                        <span className={`font-bold ${rentOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          KSh {rentOwed.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 border border-zinc-100 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Deposit Status</h5>
+                      <ShieldCheck size={14} className="text-zinc-300" />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-zinc-500">Required Deposit</span>
+                        <span className="font-semibold">KSh {expectedDeposit.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-zinc-500">Paid Deposit</span>
+                        <span className="font-semibold text-emerald-600">KSh {paidDeposit.toLocaleString()}</span>
+                      </div>
+                      <div className="pt-2 border-t border-zinc-50 flex justify-between items-center">
+                        <span className="text-xs font-bold uppercase text-zinc-400">Balance</span>
+                        <span className={`font-bold ${depositOwed > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          KSh {depositOwed.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detailed Records */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Payment History</h5>
+                    <span className="text-[10px] bg-zinc-100 px-2 py-0.5 rounded-full font-bold text-zinc-500">
+                      {tenantPayments.length} Records
+                    </span>
+                  </div>
+                  <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                    {tenantPayments.length > 0 ? (
+                      tenantPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(p => (
+                        <div key={p.id} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-transparent hover:border-zinc-200 transition-all">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${p.type === 'RENT' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
+                              {p.type === 'RENT' ? <Home size={16} /> : <ShieldCheck size={16} />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold">{new Date(p.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                              <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-tight">{p.method} • {p.transaction_id}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-zinc-900">KSh {p.amount.toLocaleString()}</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase">{p.type}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12 border-2 border-dashed border-zinc-50 rounded-2xl">
+                        <CreditCard size={32} className="mx-auto mb-2 text-zinc-200" />
+                        <p className="text-sm text-zinc-400">No payments recorded yet</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Footer Stats */}
+                <div className="pt-6 border-t border-zinc-100 flex justify-between items-center text-xs">
+                  <div className="text-zinc-400">
+                    Moved in: <span className="font-bold text-zinc-600">{new Date(selectedTenant.move_in_date).toLocaleDateString()}</span>
+                  </div>
+                  <div className="text-zinc-400">
+                    Total Owed: <span className="font-bold text-red-600 text-sm">KSh {(rentOwed + depositOwed).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </Modal>
       </main>
     </div>
@@ -1501,7 +1670,12 @@ const PropertyCard = ({ property, isAdmin, role, onManageUnits, onViewDashboard,
       </div>
 
       <div className="space-y-1 mb-6 cursor-pointer group/title" onClick={onViewDashboard}>
-        <h4 className="font-bold text-lg group-hover/title:text-black transition-colors">{property.name}</h4>
+        <div className="flex items-center justify-between">
+          <h4 className="font-bold text-lg group-hover/title:text-black transition-colors">{property.name}</h4>
+          {(isAdmin || role === 'LANDLORD') && property.total_arrears > 0 && (
+            <Badge variant="danger">Arrears: KSh {property.total_arrears.toLocaleString()}</Badge>
+          )}
+        </div>
         <p className="text-sm text-zinc-500 flex items-center gap-1">
           <ChevronRight size={14} /> {property.location}
         </p>

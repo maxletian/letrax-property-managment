@@ -154,7 +154,18 @@ async function startServer() {
       // 1. Properties
       let properties;
       const propQuery = `
-        SELECT p.*, u.name as owner_name, c.name as caretaker_name 
+        SELECT p.*, u.name as owner_name, c.name as caretaker_name,
+        (
+          SELECT COALESCE(SUM(un.monthly_rent), 0) - COALESCE((
+            SELECT SUM(pay.amount) 
+            FROM payments pay 
+            JOIN tenants t ON pay.tenant_id = t.id 
+            JOIN units u2 ON t.unit_id = u2.id 
+            WHERE u2.property_id = p.id
+          ), 0)
+          FROM units un 
+          WHERE un.property_id = p.id
+        ) as total_arrears
         FROM properties p 
         LEFT JOIN users u ON p.owner_id = u.id 
         LEFT JOIN users c ON p.caretaker_id = c.id
@@ -170,7 +181,7 @@ async function startServer() {
       // 2. Tenants
       let tenants;
       const tenantQuery = `
-        SELECT t.*, u.unit_number, p.name as property_name 
+        SELECT t.*, u.unit_number, u.monthly_rent, p.name as property_name 
         FROM tenants t 
         JOIN units u ON t.unit_id = u.id 
         JOIN properties p ON u.property_id = p.id
@@ -213,11 +224,42 @@ async function startServer() {
           totalLandlords: db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'LANDLORD'").get().count,
           totalTenants: db.prepare("SELECT COUNT(*) as count FROM tenants").get().count,
           totalRevenue: db.prepare("SELECT SUM(amount) as sum FROM payments").get().sum || 0,
-          occupancyRate: units.length ? (occupied / units.length) * 100 : 0
+          occupancyRate: units.length ? (occupied / units.length) * 100 : 0,
+          totalArrears: 0 // Will calculate below
         };
+
+        // Calculate total arrears for admin
+        const allUnits = db.prepare("SELECT monthly_rent FROM units").all();
+        const totalExpected = allUnits.reduce((acc: number, u: any) => acc + (u.monthly_rent || 0), 0);
+        globalStats.totalArrears = Math.max(0, totalExpected - globalStats.totalRevenue);
+
         landlords = db.prepare("SELECT id, name, email FROM users WHERE role = 'LANDLORD'").all();
         caretakers = db.prepare("SELECT id, name, email FROM users WHERE role = 'CARETAKER'").all();
       } else if (req.user.role === 'LANDLORD') {
+        const units = db.prepare(`
+          SELECT u.status, u.monthly_rent 
+          FROM units u 
+          JOIN properties p ON u.property_id = p.id 
+          WHERE p.owner_id = ?
+        `).all(req.user.id);
+        const occupied = units.filter((u: any) => u.status === 'OCCUPIED').length;
+        const totalRevenue = db.prepare(`
+          SELECT SUM(pay.amount) as sum 
+          FROM payments pay 
+          JOIN tenants t ON pay.tenant_id = t.id 
+          JOIN units u ON t.unit_id = u.id 
+          JOIN properties p ON u.property_id = p.id 
+          WHERE p.owner_id = ?
+        `).get(req.user.id).sum || 0;
+        const totalExpected = units.reduce((acc: number, u: any) => acc + (u.monthly_rent || 0), 0);
+
+        globalStats = {
+          totalProperties: properties.length,
+          totalTenants: tenants.length,
+          totalRevenue,
+          occupancyRate: units.length ? (occupied / units.length) * 100 : 0,
+          totalArrears: Math.max(0, totalExpected - totalRevenue)
+        };
         caretakers = db.prepare("SELECT id, name, email FROM users WHERE role = 'CARETAKER' AND created_by = ?").all(req.user.id);
       }
 
